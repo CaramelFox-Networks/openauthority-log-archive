@@ -1,0 +1,40 @@
+name: Daily Transparency Snapshot
+
+on:
+  schedule:
+    # Runs automatically every day at 00:00 UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch: 
+
+jobs:
+  fetch-and-archive:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch Latest Snapshot
+        run: |
+          # The -f flag makes curl fail if it gets a 404/500, preventing empty file commits
+          curl -s -f -o openauthority-snapshot.json https://openauthority.dev/api/transparency/snapshot
+          
+          jq . openauthority-snapshot.json > temp.json && mv temp.json openauthority-snapshot.json
+
+      - name: Commit and Push
+        run: |
+          # Set up the default GitHub Actions bot user
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add openauthority-snapshot.json
+          
+          # Only commit if the file actually changed to prevent failed action runs
+          if ! git diff-index --quiet HEAD; then
+            git commit -m "chore(archive): daily transparency log snapshot $(date +'%Y-%m-%d')"
+            git push
+          else
+            echo "No new entries in the transparency log today. Skipping commit."
+          fi
