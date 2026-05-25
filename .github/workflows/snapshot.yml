@@ -4,37 +4,60 @@ on:
   schedule:
     # Runs automatically every day at 00:00 UTC
     - cron: '0 0 * * *'
-  workflow_dispatch: 
+  workflow_dispatch:
 
 jobs:
   fetch-and-archive:
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Generate Timestamp
+        id: timestamp
+        run: |
+          # Example: 00-00-00-05-24-26
+          echo "stamp=$(date -u +'%H-%M-%S-%m-%d-%y')" >> $GITHUB_OUTPUT
 
       - name: Fetch Latest Snapshot
         run: |
-          # The -f flag makes curl fail if it gets a 404/500, preventing empty file commits
-          curl -s -f -o openauthority-snapshot.json https://openauthority.dev/api/transparency/snapshot
-          
-          jq . openauthority-snapshot.json > temp.json && mv temp.json openauthority-snapshot.json
+          curl -s -f -o openauthority-snapshot.json \
+            https://openauthority.dev/api/transparency/snapshot
+
+          jq . openauthority-snapshot.json > temp.json
+          mv temp.json openauthority-snapshot.json
 
       - name: Commit and Push
+        id: commit
         run: |
-          # Set up the default GitHub Actions bot user
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
+
           git add openauthority-snapshot.json
-          
-          # Only commit if the file actually changed to prevent failed action runs
+
           if ! git diff-index --quiet HEAD; then
-            git commit -m "chore(archive): daily transparency log snapshot $(date +'%Y-%m-%d')"
+            git commit -m "chore(archive): transparency snapshot ${{ steps.timestamp.outputs.stamp }}"
             git push
+
+            echo "changed=true" >> $GITHUB_OUTPUT
           else
             echo "No new entries in the transparency log today. Skipping commit."
+            echo "changed=false" >> $GITHUB_OUTPUT
           fi
+
+      - name: Create Release
+        if: steps.commit.outputs.changed == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: snapshot-${{ steps.timestamp.outputs.stamp }}
+          name: Transparency Snapshot ${{ steps.timestamp.outputs.stamp }}
+          body: |
+            Automated transparency snapshot archive.
+
+            Timestamp (UTC): ${{ steps.timestamp.outputs.stamp }}
+
+          files: openauthority-snapshot.json
